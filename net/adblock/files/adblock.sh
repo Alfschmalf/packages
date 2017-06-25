@@ -10,7 +10,7 @@
 #
 LC_ALL=C
 PATH="/usr/sbin:/usr/bin:/sbin:/bin"
-adb_ver="2.7.1"
+adb_ver="2.8.0"
 adb_sysver="$(ubus -S call system board | jsonfilter -e '@.release.description')"
 adb_enabled=1
 adb_debug=0
@@ -19,12 +19,13 @@ adb_manmode=0
 adb_forcesrt=0
 adb_forcedns=0
 adb_backup=0
+adb_onefile=0
 adb_backupdir="/mnt"
 adb_whitelist="/etc/adblock/adblock.whitelist"
 adb_whitelist_rset="\$1 ~/^([A-Za-z0-9_-]+\.){1,}[A-Za-z]+/{print tolower(\"^\"\$1\"\\\|[.]\"\$1)}"
 adb_fetch="/usr/bin/wget"
 adb_fetchparm="--quiet --no-cache --no-cookies --max-redirect=0 --timeout=10 --no-check-certificate -O"
-adb_dnslist="dnsmasq unbound"
+adb_dnslist="dnsmasq unbound named"
 adb_dnsprefix="adb_list"
 adb_rtfile="/tmp/adb_runtime.json"
 adb_sources=""
@@ -111,6 +112,13 @@ f_envload()
                             adb_dnsdir="${adb_dnsdir:="/var/lib/unbound"}"
                             adb_dnshidedir="${adb_dnsdir}/.adb_hidden"
                             adb_dnsformat="awk '{print \"local-zone: \042\"\$0\"\042 static\"}'"
+                            break 2
+                            ;;
+                        named)
+                            adb_dns="${dns}"
+                            adb_dnsdir="${adb_dnsdir:="/var/lib/bind"}"
+                            adb_dnshidedir="${adb_dnsdir}/.adb_hidden"
+                            adb_dnsformat="awk '{print \"\"\$0\" IN CNAME .\n*.\"\$0\" IN CNAME .\"}'"
                             break 2
                             ;;
                     esac
@@ -443,7 +451,7 @@ f_main()
     local mem_total="$(awk '/^MemTotal/ {print int($2/1000)}' "/proc/meminfo")"
 
     f_log "info " "start adblock processing ..."
-    f_log "debug" "action: ${adb_action}, manual_mode:${adb_manmode}, backup: ${adb_backup}, dns: ${adb_dns}, fetch: ${adb_fetchinfo}, mem_total: ${mem_total}, force_srt/_dns: ${adb_forcesrt}/${adb_forcedns}"
+    f_log "debug" "action: ${adb_action}, manual_mode:${adb_manmode}, backup: ${adb_backup}, dns: ${adb_dns}, fetch: ${adb_fetchinfo}, mem_total: ${mem_total}, force_srt/_dns: ${adb_forcesrt}/${adb_forcedns}, one_file: ${adb_onefile}"
     > "${adb_rtfile}"
     for src_name in ${adb_sources}
     do
@@ -544,7 +552,7 @@ f_main()
     #
     for src_name in $(ls -dASr "${adb_tmpdir}/${adb_dnsprefix}"* 2>/dev/null)
     do
-        if [ ${mem_total} -ge 64 ] || [ ${adb_forcesrt} -eq 1 ]
+        if [ ${mem_total} -ge 64 ] || [ ${adb_forcesrt} -eq 1 ] || [ ${adb_onefile} -eq 1 ]
         then
             if [ -s "${adb_tmpdir}/blocklist.overall" ]
             then
@@ -558,8 +566,12 @@ f_main()
     done
 
     # restart the dns backend and export runtime information
-    #
-    mv -f "${adb_tmpdir}/${adb_dnsprefix}"* "${adb_dnsdir}" 2>/dev/null
+    if [ ${adb_onefile} -eq 0 ] 
+    then
+        mv -f "${adb_tmpdir}/${adb_dnsprefix}"* "${adb_dnsdir}" 2>/dev/null
+    else
+        mv -f "${adb_tmpdir}/blocklist.overall" "${adb_dnsdir}/${adb_dnsprefix}"
+    fi
     chown "${adb_dns}":"${adb_dns}" "${adb_dnsdir}/${adb_dnsprefix}"* 2>/dev/null
     f_rmtemp
     f_dnsrestart
